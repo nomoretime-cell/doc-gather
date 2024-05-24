@@ -203,10 +203,6 @@ class RouteInfo(BaseModel):
     tag: str
     timestamp: int
 
-class GatherData(BaseModel):
-    routeInfo: RouteInfo
-    data: Any
-
 class Page(BboxElement):
     type: str = "text"
     block_idx: Optional[int] = None
