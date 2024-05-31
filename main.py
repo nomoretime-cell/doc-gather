@@ -1,3 +1,4 @@
+import os
 import string
 import threading
 from pyfunvice import (
@@ -17,6 +18,7 @@ from gather.schema import (
     Span,
 )
 import re
+import requests
 
 
 def generate_markdown(pages: list[Page]) -> string:
@@ -70,7 +72,7 @@ class PageWrapper:
         self.type_block_num = type_block_num
         self.type_blocks: dict[int, TypeBlock] = {}
         self.page_instance: Page = None
-        
+
     def insert_type_block(self, type_block: TypeBlock):
         if type_block.type_block_index not in self.type_blocks:
             self.type_blocks[type_block.type_block_index] = type_block
@@ -103,6 +105,7 @@ class DocWrapper:
 docs: dict[str, DocWrapper] = {}
 lock = threading.Lock()
 
+
 @app_service(path="/api/v1/parser/ppl/gather", inparam_type="flat")
 async def process(routeInfo: RouteInfo, data):
     try:
@@ -121,13 +124,15 @@ async def process(routeInfo: RouteInfo, data):
                 doc: DocWrapper = docs[type_block.doc_id]
                 for p_i in range(doc.page_num):
                     page_wrapper: PageWrapper = doc.pages[p_i]
-                    
+
                     # get text from blocks
                     block_idx_2_text: dict[int, str] = {}
                     for type_block in page_wrapper.type_blocks.values():
                         if type_block.type != "text":
-                            block_idx_2_text[type_block.block_index] = type_block.data_object
-                    
+                            block_idx_2_text[type_block.block_index] = (
+                                type_block.data_object
+                            )
+
                     # fill blocks
                     page_instance: Page = page_wrapper.page_instance
                     for block_idx, text in block_idx_2_text.items():
@@ -146,15 +151,28 @@ async def process(routeInfo: RouteInfo, data):
                                 ],
                             )
                         ]
-                    pages.append(page_instance)    
+                    pages.append(page_instance)
                 text = generate_markdown(pages)
-                with open(f"{type_block.doc_id}.md", "w") as file:
-                    file.write(text)
+                markdown_file_name = f"{type_block.doc_id}.md"
+                upload_file(routeInfo.key, markdown_file_name, text)
                 del docs[type_block.doc_id]
                 return {"text": "none"}
     except Exception as e:
         print(e)
         raise e
+
+
+def upload_file(channelId, file_name, text):
+    with open(file_name, "w") as file:
+        file.write(text)
+    r = requests.post(
+        "http://127.0.0.1:3031/tasklet/service/oss",
+        files={"file": open(file_name, "rb")},
+        data={"channelId": channelId},
+    )
+    if r.status_code != 200:
+        raise Exception(f"Upload file failed: {r.text}")
+    os.remove(file_name)
 
 
 if __name__ == "__main__":
