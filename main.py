@@ -1,3 +1,4 @@
+import logging
 import os
 import string
 import threading
@@ -20,6 +21,10 @@ from gather.schema import (
 import re
 import requests
 
+logging.basicConfig(
+    level=logging.INFO, format="[%(asctime)s] [%(thread)d] [%(levelname)s] %(message)s"
+)
+
 
 def generate_markdown(pages: list[Page]) -> string:
     if len(pages) == 0:
@@ -41,30 +46,26 @@ def generate_markdown(pages: list[Page]) -> string:
 
 class TypeBlock:
     def __init__(self, routeInfo: RouteInfo, data):
-        try:
-            doc_info = routeInfo.uuid.split("_")
+        doc_info = routeInfo.uuid.split("_")
 
-            self.doc_id = doc_info[0]
-            self.page_index = int(doc_info[1])
-            self.page_num = int(doc_info[2])
-            self.type_block_index = int(doc_info[3])
-            self.type_block_num = int(doc_info[4])
-            self.block_index = int(doc_info[5])
-            self.type = routeInfo.type
+        self.doc_id = doc_info[0]
+        self.page_index = int(doc_info[1])
+        self.page_num = int(doc_info[2])
+        self.type_block_index = int(doc_info[3])
+        self.type_block_num = int(doc_info[4])
+        self.block_index = int(doc_info[5])
+        self.type = routeInfo.type
 
-            if routeInfo.type == "text":
-                self.data_object = Page(**data)
-            elif routeInfo.type == "equation":
-                self.data_object = data["text"]
-            elif routeInfo.type == "table":
-                self.data_object = data["text"]
-            elif routeInfo.type == "picture":
-                self.data_object = ""
-            else:
-                raise Exception(f"Unknown type: {routeInfo.type}")
-        except Exception as e:
-            print(e)
-            raise e
+        if routeInfo.type == "text":
+            self.data_object = Page(**data)
+        elif routeInfo.type == "equation":
+            self.data_object = data["text"]
+        elif routeInfo.type == "table":
+            self.data_object = data["text"]
+        elif routeInfo.type == "picture":
+            self.data_object = ""
+        else:
+            raise Exception(f"Unknown type: {routeInfo.type}")
 
 
 class PageWrapper:
@@ -79,7 +80,7 @@ class PageWrapper:
         if type_block.type == "text":
             self.page_instance = type_block.data_object
         if self.is_completed():
-            print(f"Page [{str(type_block.page_index)}] is Completed")
+            logging.info(f"Page [{str(type_block.page_index)}] is Completed")
 
     def is_completed(self):
         return len(self.type_blocks) == self.type_block_num
@@ -108,58 +109,59 @@ lock = threading.Lock()
 
 @app_service(path="/api/v1/parser/ppl/gather", inparam_type="flat")
 async def process(routeInfo: RouteInfo, data):
-    try:
-        print(routeInfo)
-        routeInfo = RouteInfo(**routeInfo)
-        type_block = TypeBlock(routeInfo, data)
+    logging.info(
+        "POST request"
+        + f" [P{os.getpid()}][T{threading.current_thread().ident}] "
+        + f"routeInfo: {routeInfo}"
+    )
+    routeInfo = RouteInfo(**routeInfo)
+    type_block = TypeBlock(routeInfo, data)
 
-        global docs
-        with lock:
-            if type_block.doc_id not in docs:
-                docs[type_block.doc_id] = DocWrapper(type_block.page_num)
-            docs[type_block.doc_id].insert_type_block(type_block)
-            if docs[type_block.doc_id].is_completed():
-                print(f"Doc [{str(type_block.doc_id)}] is Completed")
-                pages: list[Page] = []
-                doc: DocWrapper = docs[type_block.doc_id]
-                for p_i in range(doc.page_num):
-                    page_wrapper: PageWrapper = doc.pages[p_i]
+    global docs
+    with lock:
+        if type_block.doc_id not in docs:
+            docs[type_block.doc_id] = DocWrapper(type_block.page_num)
+        docs[type_block.doc_id].insert_type_block(type_block)
+        if docs[type_block.doc_id].is_completed():
+            logging.info(f"Doc [{str(type_block.doc_id)}] is Completed")
+            pages: list[Page] = []
+            doc: DocWrapper = docs[type_block.doc_id]
+            for p_i in range(doc.page_num):
+                page_wrapper: PageWrapper = doc.pages[p_i]
 
-                    # get text from blocks
-                    block_idx_2_text: dict[int, str] = {}
-                    for type_block in page_wrapper.type_blocks.values():
-                        if type_block.type != "text":
-                            block_idx_2_text[type_block.block_index] = (
-                                type_block.data_object
-                            )
+                # get text from blocks
+                block_idx_2_text: dict[int, str] = {}
+                for type_block in page_wrapper.type_blocks.values():
+                    if type_block.type != "text":
+                        block_idx_2_text[type_block.block_index] = (
+                            type_block.data_object
+                        )
 
-                    # fill blocks
-                    page_instance: Page = page_wrapper.page_instance
-                    for block_idx, text in block_idx_2_text.items():
-                        page_instance.blocks[block_idx].lines = [
-                            Line(
-                                bbox=page_instance.blocks[block_idx].bbox,
-                                spans=[
-                                    Span(
-                                        bbox=page_instance.blocks[block_idx].bbox,
-                                        span_id="test",
-                                        font="test",
-                                        color=0,
-                                        block_type="test",
-                                        text=f"{text}",
-                                    )
-                                ],
-                            )
-                        ]
-                    pages.append(page_instance)
-                text = generate_markdown(pages)
-                markdown_file_name = f"{type_block.doc_id}.md"
-                upload_file(routeInfo.key, markdown_file_name, text)
-                del docs[type_block.doc_id]
-                return {"text": "none"}
-    except Exception as e:
-        print(e)
-        raise e
+                # fill blocks
+                page_instance: Page = page_wrapper.page_instance
+                for block_idx, text in block_idx_2_text.items():
+                    page_instance.blocks[block_idx].lines = [
+                        Line(
+                            bbox=page_instance.blocks[block_idx].bbox,
+                            spans=[
+                                Span(
+                                    bbox=page_instance.blocks[block_idx].bbox,
+                                    span_id="test",
+                                    font="test",
+                                    color=0,
+                                    block_type="test",
+                                    text=f"{text}",
+                                )
+                            ],
+                        )
+                    ]
+                pages.append(page_instance)
+            text = generate_markdown(pages)
+            markdown_file_name = f"{type_block.doc_id}.md"
+            upload_file(routeInfo.key, markdown_file_name, text)
+            logging.info(f"Doc [{str(type_block.doc_id)}] Upload Completed")
+            del docs[type_block.doc_id]
+            return {"text": "none"}
 
 
 def upload_file(channelId, file_name, text):
