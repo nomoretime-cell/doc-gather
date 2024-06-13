@@ -158,11 +158,17 @@ async def process(routeInfo: RouteInfo, data):
                 pages.append(page_instance)
             text = generate_markdown(pages)
             markdown_file_name = f"{type_block.doc_id}.md"
-            upload_file(routeInfo.key, markdown_file_name, text)
-            logging.info(f"Doc [{str(type_block.doc_id)}] Upload Completed")
+            # upload_file(routeInfo.key, markdown_file_name, text)
+            save_file(markdown_file_name, text)
+            logging.info(f"Doc [{str(type_block.doc_id)}] Saved Completed")
             del docs[type_block.doc_id]
             return {"text": "none"}
 
+def save_file(markdown_file_name, text):
+    mount_path = os.environ.get('MOUNT_PATH')
+    file_path = os.path.join(mount_path, markdown_file_name)
+    with open(file_path, 'w') as file:
+        file.write(text)
 
 def upload_file(channelId, file_name, text):
     with open(file_name, "w") as file:
