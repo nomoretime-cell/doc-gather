@@ -7,7 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-pyfunvice = "^0.1.9"
+pyfunvice = "^0.1.10"
 python-dotenv = "^1.0.1"
 pydantic-settings = "^2.2.1"
 ftfy = "^6.2.0"

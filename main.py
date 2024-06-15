@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import string
@@ -5,6 +6,7 @@ import threading
 from pyfunvice import (
     app_service,
     start_app,
+    app_service_get,
 )
 
 from gather.bullets import replace_bullets
@@ -164,11 +166,13 @@ async def process(routeInfo: RouteInfo, data):
             del docs[type_block.doc_id]
             return {"text": "none"}
 
+
 def save_file(markdown_file_name, text):
-    mount_path = os.environ.get('MOUNT_PATH')
+    mount_path = os.environ.get("MOUNT_PATH")
     file_path = os.path.join(mount_path, markdown_file_name)
-    with open(file_path, 'w') as file:
+    with open(file_path, "w") as file:
         file.write(text)
+
 
 def upload_file(channelId, file_name, text):
     with open(file_name, "w") as file:
@@ -183,5 +187,11 @@ def upload_file(channelId, file_name, text):
     os.remove(file_name)
 
 
+@app_service_get(path="/health")
+async def health(data: dict) -> dict:
+    time_string = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return {"timestamp": time_string}
+
+
 if __name__ == "__main__":
-    start_app(workers=1, port=8005, post_fork_func=None)
+    start_app(workers=1, port=8000, post_fork_func=None)
