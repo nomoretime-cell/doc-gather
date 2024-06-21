@@ -50,7 +50,7 @@ class TypeBlock:
     def __init__(self, routeInfo: RouteInfo, data):
         doc_info = routeInfo.uuid.split("_")
 
-        self.doc_id = doc_info[0]
+        self.doc_id = doc_info[0].replace("/", "_")
         self.page_index = int(doc_info[1])
         self.page_num = int(doc_info[2])
         self.type_block_index = int(doc_info[3])
