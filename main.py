@@ -3,6 +3,7 @@ import logging
 import os
 import string
 import threading
+import time
 from pyfunvice import (
     app_service,
     start_app,
@@ -92,8 +93,10 @@ class DocWrapper:
     def __init__(self, page_num):
         self.page_num = page_num
         self.pages: dict[int, PageWrapper] = {}
+        self.last_update = datetime.datetime.now()
 
     def insert_type_block(self, type_block: TypeBlock):
+        self.last_update = datetime.datetime.now()
         if type_block.page_index not in self.pages:
             self.pages[type_block.page_index] = PageWrapper(type_block.type_block_num)
         self.pages[type_block.page_index].insert_type_block(type_block)
@@ -125,47 +128,49 @@ async def process(routeInfo: RouteInfo, data):
             docs[type_block.doc_id] = DocWrapper(type_block.page_num)
         docs[type_block.doc_id].insert_type_block(type_block)
         if docs[type_block.doc_id].is_completed():
-            logging.info(f"Doc [{str(type_block.doc_id)}] is Completed")
-            pages: list[Page] = []
-            doc: DocWrapper = docs[type_block.doc_id]
-            for p_i in range(doc.page_num):
-                page_wrapper: PageWrapper = doc.pages[p_i]
+            process_completed_doc(type_block.doc_id)
+        return {"text": "none"}
 
-                # get text from blocks
-                block_idx_2_text: dict[int, str] = {}
-                for type_block in page_wrapper.type_blocks.values():
-                    if type_block.type != "text":
-                        block_idx_2_text[type_block.block_index] = (
-                            type_block.data_object
-                        )
+def process_completed_doc(doc_id):
+    logging.info(f"Doc [{str(doc_id)}] is Completed")
+    pages: list[Page] = []
+    doc: DocWrapper = docs[doc_id]
+    for p_i in range(doc.page_num):
+        page_wrapper: PageWrapper = doc.pages[p_i]
 
-                # fill blocks
-                page_instance: Page = page_wrapper.page_instance
-                for block_idx, text in block_idx_2_text.items():
-                    page_instance.blocks[block_idx].lines = [
-                        Line(
+        # get text from blocks
+        block_idx_2_text: dict[int, str] = {}
+        for type_block in page_wrapper.type_blocks.values():
+            if type_block.type != "text":
+                block_idx_2_text[type_block.block_index] = (
+                    type_block.data_object
+                )
+
+        # fill blocks
+        page_instance: Page = page_wrapper.page_instance
+        for block_idx, text in block_idx_2_text.items():
+            page_instance.blocks[block_idx].lines = [
+                Line(
+                    bbox=page_instance.blocks[block_idx].bbox,
+                    spans=[
+                        Span(
                             bbox=page_instance.blocks[block_idx].bbox,
-                            spans=[
-                                Span(
-                                    bbox=page_instance.blocks[block_idx].bbox,
-                                    span_id="test",
-                                    font="test",
-                                    color=0,
-                                    block_type="test",
-                                    text=f"{text}",
-                                )
-                            ],
+                            span_id="test",
+                            font="test",
+                            color=0,
+                            block_type="test",
+                            text=f"{text}",
                         )
-                    ]
-                pages.append(page_instance)
-            text = generate_markdown(pages)
-            markdown_file_name = f"{type_block.doc_id}.md"
-            # upload_file(routeInfo.key, markdown_file_name, text)
-            save_file(markdown_file_name, text)
-            logging.info(f"Doc [{str(type_block.doc_id)}] Saved Completed")
-            del docs[type_block.doc_id]
-            return {"text": "none"}
-
+                    ],
+                )
+            ]
+        pages.append(page_instance)
+    text = generate_markdown(pages)
+    markdown_file_name = f"{type_block.doc_id}.md"
+    # upload_file(routeInfo.key, markdown_file_name, text)
+    save_file(markdown_file_name, text)
+    logging.info(f"Doc [{str(type_block.doc_id)}] Saved Completed")
+    del docs[type_block.doc_id]
 
 def save_file(markdown_file_name, text):
     mount_path = os.environ.get("MOUNT_PATH")
@@ -192,6 +197,20 @@ async def health(data: dict) -> dict:
     time_string = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return {"timestamp": time_string}
 
-
+def check_timeout():
+    while True:
+        now = datetime.datetime.now()
+        to_process = []
+        
+        with lock:
+            for doc_id, doc in docs.items():
+                if now - doc.last_update > datetime.datetime.timedelta(minutes=5):
+                    to_process.append(doc_id)
+        
+        for doc_id in to_process:
+            process_completed_doc(doc_id)
+        time.sleep(10)
 if __name__ == "__main__":
+    new_thread = threading.Thread(target=check_timeout)
+    new_thread.start()
     start_app(workers=1, port=8000, post_fork_func=None)
