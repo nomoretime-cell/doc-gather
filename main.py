@@ -90,7 +90,8 @@ class PageWrapper:
 
 
 class DocWrapper:
-    def __init__(self, page_num):
+    def __init__(self, page_num, routeInfo_key):
+        self.channel_id = routeInfo_key
         self.page_num = page_num
         self.pages: dict[int, PageWrapper] = {}
         self.last_update = datetime.datetime.now()
@@ -125,11 +126,12 @@ async def process(routeInfo: RouteInfo, data):
     global docs
     with lock:
         if type_block.doc_id not in docs:
-            docs[type_block.doc_id] = DocWrapper(type_block.page_num)
+            docs[type_block.doc_id] = DocWrapper(type_block.page_num, routeInfo.key)
         docs[type_block.doc_id].insert_type_block(type_block)
         if docs[type_block.doc_id].is_completed():
             process_completed_doc(type_block.doc_id)
         return {"text": "none"}
+
 
 def process_completed_doc(doc_id):
     logging.info(f"Doc [{str(doc_id)}] is Completed")
@@ -142,9 +144,7 @@ def process_completed_doc(doc_id):
         block_idx_2_text: dict[int, str] = {}
         for type_block in page_wrapper.type_blocks.values():
             if type_block.type != "text":
-                block_idx_2_text[type_block.block_index] = (
-                    type_block.data_object
-                )
+                block_idx_2_text[type_block.block_index] = type_block.data_object
 
         # fill blocks
         page_instance: Page = page_wrapper.page_instance
@@ -169,14 +169,34 @@ def process_completed_doc(doc_id):
     markdown_file_name = f"{type_block.doc_id}.md"
     # upload_file(routeInfo.key, markdown_file_name, text)
     save_file(markdown_file_name, text)
+    callback_file_status(type_block.doc_id, doc.channel_id)
     logging.info(f"Doc [{str(type_block.doc_id)}] Saved Completed")
     del docs[type_block.doc_id]
+
 
 def save_file(markdown_file_name, text):
     mount_path = os.environ.get("MOUNT_PATH")
     file_path = os.path.join(mount_path, markdown_file_name)
     with open(file_path, "w") as file:
         file.write(text)
+
+
+def callback_file_status(file_name, channel_id):
+    url = f"{os.environ.get('CALLBACK_SERVICE_NAME')}/api/v1/task"
+    payload = {
+        "routeInfo": {
+            "key": channel_id,
+            "uuid": file_name,
+            "type": "",
+            "tag": "",
+            "timestamp": int(time.time()),
+        },
+        "data": {"status": "success"},
+    }
+    headers = {"Content-Type": "application/json"}
+
+    response = requests.request("POST", url, json=payload, headers=headers)
+    print(response.text)
 
 
 def upload_file(channelId, file_name, text):
@@ -197,19 +217,22 @@ async def health(data: dict) -> dict:
     time_string = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return {"timestamp": time_string}
 
+
 def check_timeout():
     while True:
         now = datetime.datetime.now()
         to_process = []
-        
+
         with lock:
             for doc_id, doc in docs.items():
                 if now - doc.last_update > datetime.datetime.timedelta(minutes=5):
                     to_process.append(doc_id)
-        
+
         for doc_id in to_process:
             process_completed_doc(doc_id)
         time.sleep(10)
+
+
 if __name__ == "__main__":
     new_thread = threading.Thread(target=check_timeout)
     new_thread.start()
